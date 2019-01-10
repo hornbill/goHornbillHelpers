@@ -111,6 +111,7 @@ func Logger(t int, s string, outputToCLI bool, fileName string) {
 	// don't forget to close it
 	if err != nil {
 		//We didnt manage to open the log file so exit the function
+		color.Red("Error Opening Log File %q: %s \r", logFileName, err)
 		return
 	}
 	defer f.Close()
@@ -155,6 +156,11 @@ func Logger(t int, s string, outputToCLI bool, fileName string) {
 	case 6:
 		if outputToCLI {
 			color.Set(color.FgYellow)
+			defer color.Unset()
+		}
+	case 7:
+		if outputToCLI {
+			color.Set(color.FgBlue)
 			defer color.Unset()
 		}
 	}
