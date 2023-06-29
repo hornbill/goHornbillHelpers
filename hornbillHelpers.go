@@ -1,6 +1,8 @@
 package hornbillHelpers
 
 import (
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -8,11 +10,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
-	"github.com/hornbill/color"
+	"github.com/fatih/color"
+	"golang.org/x/sys/windows"
 )
 
 const (
+	cryptProtectUIForbidden cryptProtect = 0x1
+
 	sizeKB float64 = 1 << (10 * 1) // 1 refers to the constants ByteSize KB
 	sizeMB float64 = 5 << (10 * 2) // 2 refers to the constants ByteSize MB
 	sizeGB float64 = 1 << (10 * 3) // 3 refers to the constants ByteSize GB
@@ -21,11 +27,26 @@ const (
 	sizeEB float64 = 1 << (10 * 6) // 6 refers to the constants ByteSize EB
 )
 
-/*CalculateTimeDuration - takes startTime as a time.Time object, a period of time, and calculates new date/time.
+var (
+	dllcrypt32      = windows.NewLazySystemDLL("Crypt32.dll")
+	procEncryptData = dllcrypt32.NewProc("CryptProtectData")
+	procDecryptData = dllcrypt32.NewProc("CryptUnprotectData")
+)
+
+type cryptProtect uint32
+
+type dataBlob struct {
+	cbData uint32
+	pbData *byte
+}
+
+/*
+CalculateTimeDuration - takes startTime as a time.Time object, a period of time, and calculates new date/time.
 -- Return resulting time obj, the number of seconds between start and end datetime
 -- Duration should be be in the following format:
 -- For adding a period of time: P1D2H3M4S - This will add 1 day (1D), 2 hours (2H), 3 minutes (3H) and 4 seconds (4S) to the provided time
--- For subtracting a period of time: -P1D2H3M4S - This will subtract 1 day (1D), 2 hours (2H), 3 minutes (3H) and 4 seconds (4S) from the provided time */
+-- For subtracting a period of time: -P1D2H3M4S - This will subtract 1 day (1D), 2 hours (2H), 3 minutes (3H) and 4 seconds (4S) from the provided time
+*/
 func CalculateTimeDuration(startTime time.Time, duration string) (time.Time, int) {
 
 	returnDate := startTime
@@ -73,7 +94,7 @@ func CalculateTimeDuration(startTime time.Time, duration string) (time.Time, int
 	return returnDate, totalSeconds
 }
 
-//ConvFloatToStorage - takes given float64 value, returns a human readable storage capacity string
+// ConvFloatToStorage - takes given float64 value, returns a human readable storage capacity string
 func ConvFloatToStorage(floatNum float64) (strReturn string) {
 	if floatNum >= sizePB {
 		strReturn = fmt.Sprintf("%.2fPB", floatNum/sizePB)
@@ -170,7 +191,7 @@ func Logger(t int, s string, outputToCLI bool, fileName string) {
 	log.Println(errorLogPrefix + s)
 }
 
-//ConfirmResponse - prompts user, expects a fuzzy yes (or a provided string) or no response, does not continue until this is given
+// ConfirmResponse - prompts user, expects a fuzzy yes (or a provided string) or no response, does not continue until this is given
 func ConfirmResponse(confirm string) bool {
 	var cmdResponse string
 	_, errResponse := fmt.Scanln(&cmdResponse)
@@ -196,4 +217,100 @@ func ConfirmResponse(confirm string) bool {
 		color.Red("Please enter yes or no to continue:")
 		return ConfirmResponse(confirm)
 	}
+}
+
+// Encrypt - takes mandatory input string and entropy, returns b64 encoded string
+func Encrypt(inputString, entropy string) (string, error) {
+	if inputString == "" {
+		return "", errors.New("inputString input is mandatory")
+	}
+	if entropy == "" {
+		return "", errors.New("entropy input is mandatory")
+	}
+	encrypted, err := encryptBytes([]byte(inputString), cryptProtectUIForbidden, entropy)
+	b64Enc := base64.StdEncoding.EncodeToString(encrypted)
+	return b64Enc, err
+}
+
+// Decrypt - takes mandatory b64 encoded input string and entropy, returns  encoded string
+func Decrypt(inputString, entropy string) (string, error) {
+	if inputString == "" {
+		return "", errors.New("inputString input is mandatory")
+	}
+	if entropy == "" {
+		return "", errors.New("entropy input is mandatory")
+	}
+	raw, err := base64.StdEncoding.DecodeString(inputString)
+	if err != nil {
+		return "", err
+	}
+	b, err := decryptBytes(raw, cryptProtectUIForbidden, entropy)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func encryptBytes(data []byte, cf cryptProtect, entropy string) ([]byte, error) {
+	var (
+		outblob dataBlob
+		r       uintptr
+		err     error
+	)
+
+	r, _, err = procEncryptData.Call(uintptr(unsafe.Pointer(newBlob(data))), 0, uintptr(unsafe.Pointer(newBlob([]byte(entropy)))), 0, 0, uintptr(cf), uintptr(unsafe.Pointer(&outblob)))
+
+	if r == 0 {
+		return nil, err
+	}
+	enc := outblob.toByteArray()
+	return enc, outblob.free()
+}
+
+// DecryptBytes decrypts a byte array returning a byte array
+func decryptBytes(data []byte, cf cryptProtect, entropy string) ([]byte, error) {
+	var (
+		outblob dataBlob
+		r       uintptr
+		err     error
+	)
+
+	r, _, err = procDecryptData.Call(uintptr(unsafe.Pointer(newBlob(data))), 0, uintptr(unsafe.Pointer(newBlob([]byte(entropy)))), 0, 0, uintptr(cf), uintptr(unsafe.Pointer(&outblob)))
+	if r == 0 {
+		return nil, err
+	}
+
+	dec := outblob.toByteArray()
+	outblob.zeroMemory()
+	return dec, outblob.free()
+}
+
+func (b *dataBlob) toByteArray() []byte {
+	d := make([]byte, b.cbData)
+	copy(d, (*[1 << 30]byte)(unsafe.Pointer(b.pbData))[:])
+	return d
+}
+
+func newBlob(d []byte) *dataBlob {
+	if len(d) == 0 {
+		return &dataBlob{}
+	}
+	return &dataBlob{
+		pbData: &d[0],
+		cbData: uint32(len(d)),
+	}
+}
+
+func (b *dataBlob) free() error {
+	_, err := windows.LocalFree(windows.Handle(unsafe.Pointer(b.pbData)))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *dataBlob) zeroMemory() {
+	zeros := make([]byte, b.cbData)
+	copy((*[1 << 30]byte)(unsafe.Pointer(b.pbData))[:], zeros)
 }

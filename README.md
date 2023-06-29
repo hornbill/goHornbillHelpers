@@ -39,7 +39,7 @@ Create or append to a log file in to the **/log** folder of the folder where the
 3. **bool**: Should the log entry also be output to the CLI
 4. **string**: Log file name
 
-##ConfirmResponse
+## ConfirmResponse
 CLI prompt to user, expects a user response of:
 - Fuzzy yes (y, Y, yes, Yes, YES) or input param provided string
 - Fuzzy no (n, N, no, No, NO)
@@ -47,3 +47,25 @@ Function does not return until an expected response is given.
 
 ### Input Parameters
 1. **string**: An overriding replacement for the fuzzy yes expected response
+
+## Encrypt
+Uses the Windows Data Protection API to encrypt a string with a given entropy. 
+
+### Input Parameters
+1. **string**: The string you wish to encrypt
+2. **string**: The entropy
+
+ ### Output Parameters
+ 1. **string**: The encrypted string
+ 2. **error**: Any error returned
+
+ ## Decrypt
+Uses the Windows Data Protection API to decrypt a string with a given entropy. 
+
+### Input Parameters
+1. **string**: The string you wish to decrypt
+2. **string**: The entropy
+
+ ### Output Parameters
+ 1. **string**: The decrypted string
+ 2. **error**: Any error returned
