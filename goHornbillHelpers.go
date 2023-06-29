@@ -1,4 +1,4 @@
-package hornbillHelpers
+package goHornbillHelpers
 
 import (
 	"encoding/base64"
